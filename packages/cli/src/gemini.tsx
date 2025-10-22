@@ -14,6 +14,7 @@ import {
   logIdeConnection,
   logUserPrompt,
   sessionId,
+  GeminiEventType,
 } from '@qwen-code/qwen-code-core';
 import { render } from 'ink';
 import { spawn } from 'node:child_process';
@@ -47,10 +48,7 @@ import { validateNonInteractiveAuth } from './validateNonInterActiveAuth.js';
 import { runZedIntegration } from './zed-integration/zedIntegration.js';
 import { createStructuredServer } from './structuredServerMode.js';
 import type { BaseStructuredServer } from './structuredServerMode.js';
-import {
-  QwenStateSerializer,
-  createInitMessage,
-} from './qwenStateSerializer.js';
+import { createInitMessage } from './qwenStateSerializer.js';
 
 export function validateDnsResolutionOrder(
   order: string | undefined,
@@ -184,7 +182,6 @@ export async function runServerMode(
   server: BaseStructuredServer,
 ) {
   const version = await getCliVersion();
-  const serializer = new QwenStateSerializer();
 
   console.error('[ServerMode] Starting structured server mode');
   console.error('[ServerMode] Version:', version);
@@ -199,131 +196,250 @@ export async function runServerMode(
   );
   await server.sendMessage(initMsg);
 
-  // Start headless mode (no Ink rendering)
-  // We'll track state changes directly instead of rendering to terminal
-  // For now, this is a simplified implementation that doesn't run the full UI
-  // TODO: Implement proper headless mode that runs App logic without rendering
+  // Get GeminiClient from config
+  const geminiClient = config.getGeminiClient();
+  if (!geminiClient) {
+    console.error('[ServerMode] ERROR: GeminiClient not available');
+    await server.sendMessage({
+      type: 'error',
+      message: 'GeminiClient not initialized',
+      id: Date.now(),
+    });
+    await server.stop();
+    return;
+  }
 
-  console.error('[ServerMode] Server mode is running...');
-  console.error(
-    '[ServerMode] NOTE: This is a preliminary implementation.',
-  );
-  console.error(
-    '[ServerMode] Full integration with App state requires additional work.',
-  );
+  // Initialize client if needed
+  if (!geminiClient.isInitialized()) {
+    console.error('[ServerMode] Initializing GeminiClient...');
+    try {
+      await config.initialize();
+      console.error('[ServerMode] GeminiClient initialized successfully');
+    } catch (error) {
+      console.error('[ServerMode] Failed to initialize GeminiClient:', error);
+      await server.sendMessage({
+        type: 'error',
+        message: `Failed to initialize AI client: ${error}`,
+        id: Date.now(),
+      });
+      await server.stop();
+      return;
+    }
+  }
 
-  // MOCK TEST MODE: Send realistic mock responses for testing C++ side
+  console.error('[ServerMode] Server mode is running with real AI...');
+  console.error('[ServerMode] Waiting for user input...');
+
+  // Track pending tool calls for approval flow
+  const pendingToolCalls = new Map<string, any>();
+  let currentAbortController: AbortController | null = null;
+
+  // Main server loop - process commands from C++ client
   while (server.isRunning()) {
     const cmd = await server.receiveCommand();
-    if (cmd) {
-      console.error('[ServerMode] Received command:', cmd.type);
+    if (!cmd) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      continue;
+    }
 
-      if (cmd.type === 'user_input') {
-        // Echo user input
+    console.error('[ServerMode] Received command:', cmd.type);
+
+    if (cmd.type === 'user_input') {
+      // Echo user input
+      await server.sendMessage({
+        type: 'conversation',
+        role: 'user',
+        content: cmd.content,
+        id: Date.now(),
+      });
+
+      // Send status update
+      await server.sendMessage({
+        type: 'status',
+        state: 'responding',
+        message: 'Processing your request...',
+      });
+
+      // Create abort controller for this request
+      currentAbortController = new AbortController();
+      const promptId = `prompt-${Date.now()}`;
+
+      try {
+        // Call real AI with sendMessageStream
+        const stream = geminiClient.sendMessageStream(
+          cmd.content,
+          currentAbortController.signal,
+          promptId,
+        );
+
+        // Accumulate streaming content
+        let contentBuffer = '';
+        let messageId = Date.now();
+        let hasStartedStreaming = false;
+
+        // Process stream events
+        for await (const event of stream) {
+          if (currentAbortController.signal.aborted) {
+            break;
+          }
+
+          switch (event.type) {
+            case GeminiEventType.Content:
+              // Streaming text content from AI
+              contentBuffer += event.value;
+              hasStartedStreaming = true;
+
+              await server.sendMessage({
+                type: 'conversation',
+                role: 'assistant',
+                content: event.value,
+                id: messageId,
+                isStreaming: true,
+              });
+              break;
+
+            case GeminiEventType.Thought:
+              // AI is thinking about something
+              await server.sendMessage({
+                type: 'status',
+                state: 'responding',
+                message: `Thinking: ${event.value.subject}`,
+              });
+              break;
+
+            case GeminiEventType.ToolCallRequest:
+              // AI wants to execute a tool
+              const toolInfo = event.value;
+              pendingToolCalls.set(toolInfo.callId, toolInfo);
+
+              await server.sendMessage({
+                type: 'tool_group',
+                id: Date.now(),
+                tools: [
+                  {
+                    type: 'tool_call',
+                    tool_id: toolInfo.callId,
+                    tool_name: toolInfo.name,
+                    status: 'pending',
+                    args: toolInfo.args,
+                    confirmation_details: {
+                      message: `Execute ${toolInfo.name} with args: ${JSON.stringify(toolInfo.args)}`,
+                      requires_approval: true,
+                    },
+                  },
+                ],
+              });
+              break;
+
+            case GeminiEventType.Error:
+              await server.sendMessage({
+                type: 'error',
+                message: event.value.error?.message || 'Unknown error',
+                id: Date.now(),
+              });
+              break;
+
+            case GeminiEventType.ChatCompressed:
+              if (event.value) {
+                await server.sendMessage({
+                  type: 'info',
+                  message: `Chat compressed: ${event.value.originalTokenCount} → ${event.value.newTokenCount} tokens`,
+                  id: Date.now(),
+                });
+              }
+              break;
+
+            case GeminiEventType.Finished:
+              // Stream finished
+              if (hasStartedStreaming) {
+                await server.sendMessage({
+                  type: 'conversation',
+                  role: 'assistant',
+                  content: '',
+                  id: messageId,
+                  isStreaming: false,
+                });
+              }
+              console.error(
+                '[ServerMode] Stream finished. Reason:',
+                event.value,
+              );
+              break;
+
+            case GeminiEventType.UserCancelled:
+              await server.sendMessage({
+                type: 'info',
+                message: 'Request cancelled by user',
+                id: Date.now(),
+              });
+              break;
+
+            case GeminiEventType.LoopDetected:
+              await server.sendMessage({
+                type: 'info',
+                message: 'Loop detected - stopping to prevent infinite loop',
+                id: Date.now(),
+              });
+              break;
+
+            default:
+              console.error('[ServerMode] Unhandled event type:', event.type);
+          }
+        }
+
+        // TODO: Send completion stats if available from the turn
+        // The stream returns a Turn object that contains token usage info
+        // For now, we'll skip this as it requires accessing the return value
+
+      } catch (error: any) {
+        console.error('[ServerMode] Error during AI stream:', error);
         await server.sendMessage({
-          type: 'conversation',
-          role: 'user',
-          content: cmd.content,
+          type: 'error',
+          message: error?.message || 'Unknown error during AI processing',
+          id: Date.now(),
+        });
+      }
+    } else if (cmd.type === 'tool_approval') {
+      console.error('[ServerMode] Tool approval received:', cmd);
+
+      const toolInfo = pendingToolCalls.get(cmd.tool_id);
+      if (!toolInfo) {
+        console.error('[ServerMode] Unknown tool_id:', cmd.tool_id);
+        continue;
+      }
+
+      if (cmd.approved) {
+        await server.sendMessage({
+          type: 'status',
+          state: 'responding',
+          message: 'Executing tool...',
+        });
+
+        // TODO: Implement real tool execution
+        // For now, tools will be executed automatically by the GeminiClient
+        // This requires integration with the tool scheduler and executor
+        await server.sendMessage({
+          type: 'info',
+          message: `Tool ${toolInfo.name} approved - execution handling TBD`,
           id: Date.now(),
         });
 
-        // Send status update
+        pendingToolCalls.delete(cmd.tool_id);
+      } else {
         await server.sendMessage({
-          type: 'status',
-          message: 'Processing your request...',
+          type: 'info',
+          message: 'Tool execution cancelled by user',
+          id: Date.now(),
         });
-
-        await new Promise((resolve) => setTimeout(resolve, 300));
-
-        // Simulate streaming AI response in chunks
-        const mockResponse = `I understand you said "${cmd.content}". This is a mock response from the test server mode. I can help you with various tasks!`;
-        const words = mockResponse.split(' ');
-
-        for (let i = 0; i < words.length; i += 3) {
-          const chunk = words.slice(i, i + 3).join(' ') + ' ';
-          await server.sendMessage({
-            type: 'conversation',
-            role: 'assistant',
-            content: chunk,
-            id: Date.now() + i,
-            isStreaming: true,
-          });
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-
-        // Final complete message
-        await server.sendMessage({
-          type: 'conversation',
-          role: 'assistant',
-          content: '',
-          id: Date.now() + 1000,
-          isStreaming: false,
-        });
-
-        // Simulate a tool call if the message contains "test tool"
-        if (cmd.content.toLowerCase().includes('test tool')) {
-          await new Promise((resolve) => setTimeout(resolve, 200));
-
-          await server.sendMessage({
-            type: 'tool_group',
-            id: Date.now(),
-            tools: [
-              {
-                id: 'tool_1',
-                name: 'read_file',
-                arguments: { path: '/example/test.txt' },
-                status: 'pending',
-                needsConfirmation: true,
-                confirmationDetails: 'Read the test file to analyze its contents',
-              },
-            ],
-          });
-        }
-
-        // Send completion stats
-        await server.sendMessage({
-          type: 'completion_stats',
-          inputTokens: 150,
-          outputTokens: 50,
-          totalTokens: 200,
-        });
-
-      } else if (cmd.type === 'tool_approval') {
-        console.error('[ServerMode] Tool approval received:', cmd);
-
-        if (cmd.approved) {
-          // Simulate tool execution
-          await server.sendMessage({
-            type: 'status',
-            message: 'Executing tool...',
-          });
-
-          await new Promise((resolve) => setTimeout(resolve, 500));
-
-          await server.sendMessage({
-            type: 'info',
-            message: 'Tool execution complete: Read 150 lines from test.txt',
-          });
-
-          await server.sendMessage({
-            type: 'conversation',
-            role: 'assistant',
-            content: 'Tool executed successfully! The file contains example data.',
-            id: Date.now(),
-          });
-        } else {
-          await server.sendMessage({
-            type: 'info',
-            message: 'Tool execution cancelled by user',
-          });
-        }
-      } else if (cmd.type === 'interrupt') {
-        console.error('[ServerMode] Interrupt received, shutting down');
-        break;
+        pendingToolCalls.delete(cmd.tool_id);
       }
+    } else if (cmd.type === 'interrupt') {
+      console.error('[ServerMode] Interrupt received, shutting down');
+      if (currentAbortController) {
+        currentAbortController.abort();
+      }
+      break;
     }
-
-    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   await server.stop();

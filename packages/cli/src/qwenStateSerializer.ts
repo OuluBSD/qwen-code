@@ -18,10 +18,9 @@
 import type {
   HistoryItem,
   HistoryItemWithoutId,
-  StreamingState,
-  ToolCallStatus,
   IndividualToolCallDisplay,
 } from './ui/types.js';
+import { StreamingState, ToolCallStatus } from './ui/types.js';
 
 // ============================================================================
 // Protocol Message Types (TypeScript → C++)
@@ -40,6 +39,7 @@ export interface QwenConversationMessage {
   content: string;
   id: number;
   timestamp?: number;
+  isStreaming?: boolean;
 }
 
 export interface QwenToolCall {
@@ -166,11 +166,11 @@ function serializeToolCall(tool: IndividualToolCallDisplay): QwenToolCall {
     result:
       typeof tool.resultDisplay === 'string'
         ? tool.resultDisplay
-        : tool.resultDisplay?.message,
+        : (tool.resultDisplay as any)?.message,
     confirmation_details: tool.confirmationDetails
       ? {
-          message: tool.confirmationDetails.message || '',
-          requires_approval: tool.confirmationDetails.requiresConfirmation,
+          message: (tool.confirmationDetails as any).message || '',
+          requires_approval: (tool.confirmationDetails as any).requiresConfirmation ?? false,
         }
       : undefined,
   };
