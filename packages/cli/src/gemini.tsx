@@ -212,14 +212,14 @@ export async function runServerMode(
     '[ServerMode] Full integration with App state requires additional work.',
   );
 
-  // Simple echo loop for testing
+  // MOCK TEST MODE: Send realistic mock responses for testing C++ side
   while (server.isRunning()) {
     const cmd = await server.receiveCommand();
     if (cmd) {
       console.error('[ServerMode] Received command:', cmd.type);
 
       if (cmd.type === 'user_input') {
-        // Send back as conversation message (echo for now)
+        // Echo user input
         await server.sendMessage({
           type: 'conversation',
           role: 'user',
@@ -227,8 +227,96 @@ export async function runServerMode(
           id: Date.now(),
         });
 
-        // TODO: Actually process the input through qwen-code
-        // This requires hooking into the App's submitQuery function
+        // Send status update
+        await server.sendMessage({
+          type: 'status',
+          message: 'Processing your request...',
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        // Simulate streaming AI response in chunks
+        const mockResponse = `I understand you said "${cmd.content}". This is a mock response from the test server mode. I can help you with various tasks!`;
+        const words = mockResponse.split(' ');
+
+        for (let i = 0; i < words.length; i += 3) {
+          const chunk = words.slice(i, i + 3).join(' ') + ' ';
+          await server.sendMessage({
+            type: 'conversation',
+            role: 'assistant',
+            content: chunk,
+            id: Date.now() + i,
+            isStreaming: true,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+
+        // Final complete message
+        await server.sendMessage({
+          type: 'conversation',
+          role: 'assistant',
+          content: '',
+          id: Date.now() + 1000,
+          isStreaming: false,
+        });
+
+        // Simulate a tool call if the message contains "test tool"
+        if (cmd.content.toLowerCase().includes('test tool')) {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+
+          await server.sendMessage({
+            type: 'tool_group',
+            id: Date.now(),
+            tools: [
+              {
+                id: 'tool_1',
+                name: 'read_file',
+                arguments: { path: '/example/test.txt' },
+                status: 'pending',
+                needsConfirmation: true,
+                confirmationDetails: 'Read the test file to analyze its contents',
+              },
+            ],
+          });
+        }
+
+        // Send completion stats
+        await server.sendMessage({
+          type: 'completion_stats',
+          inputTokens: 150,
+          outputTokens: 50,
+          totalTokens: 200,
+        });
+
+      } else if (cmd.type === 'tool_approval') {
+        console.error('[ServerMode] Tool approval received:', cmd);
+
+        if (cmd.approved) {
+          // Simulate tool execution
+          await server.sendMessage({
+            type: 'status',
+            message: 'Executing tool...',
+          });
+
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
+          await server.sendMessage({
+            type: 'info',
+            message: 'Tool execution complete: Read 150 lines from test.txt',
+          });
+
+          await server.sendMessage({
+            type: 'conversation',
+            role: 'assistant',
+            content: 'Tool executed successfully! The file contains example data.',
+            id: Date.now(),
+          });
+        } else {
+          await server.sendMessage({
+            type: 'info',
+            message: 'Tool execution cancelled by user',
+          });
+        }
       } else if (cmd.type === 'interrupt') {
         console.error('[ServerMode] Interrupt received, shutting down');
         break;
