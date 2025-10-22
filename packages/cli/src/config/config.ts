@@ -116,6 +116,9 @@ export interface CliArgs {
   tavilyApiKey: string | undefined;
   screenReader: boolean | undefined;
   vlmSwitchMode: string | undefined;
+  serverMode: string | undefined;
+  pipePath: string | undefined;
+  tcpPort: number | undefined;
 }
 
 export async function parseArguments(settings: Settings): Promise<CliArgs> {
@@ -289,6 +292,22 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
           description:
             'Default behavior when images are detected in input. Values: once (one-time switch), session (switch for entire session), persist (continue with current model). Overrides settings files.',
           default: process.env['VLM_SWITCH_MODE'],
+        })
+        .option('server-mode', {
+          type: 'string',
+          choices: ['stdin', 'pipe', 'tcp'],
+          description:
+            'Run in server mode for external frontend (stdin, pipe, or tcp)',
+        })
+        .option('pipe-path', {
+          type: 'string',
+          description:
+            'Named pipe path (for pipe mode). Two pipes will be created: <path>.in and <path>.out',
+        })
+        .option('tcp-port', {
+          type: 'number',
+          default: 7777,
+          description: 'TCP port (for tcp mode)',
         })
         .check((argv) => {
           if (argv.prompt && argv['promptInteractive']) {

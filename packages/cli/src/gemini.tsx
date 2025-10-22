@@ -45,6 +45,12 @@ import { getUserStartupWarnings } from './utils/userStartupWarnings.js';
 import { getCliVersion } from './utils/version.js';
 import { validateNonInteractiveAuth } from './validateNonInterActiveAuth.js';
 import { runZedIntegration } from './zed-integration/zedIntegration.js';
+import { createStructuredServer } from './structuredServerMode.js';
+import type { BaseStructuredServer } from './structuredServerMode.js';
+import {
+  QwenStateSerializer,
+  createInitMessage,
+} from './qwenStateSerializer.js';
 
 export function validateDnsResolutionOrder(
   order: string | undefined,
@@ -165,6 +171,75 @@ export async function startInteractiveUI(
     });
 
   registerCleanup(() => instance.unmount());
+}
+
+/**
+ * Run in server mode - Sends structured semantic data to external frontend
+ */
+export async function runServerMode(
+  config: Config,
+  settings: LoadedSettings,
+  startupWarnings: string[],
+  workspaceRoot: string,
+  server: BaseStructuredServer,
+) {
+  const version = await getCliVersion();
+  const serializer = new QwenStateSerializer();
+
+  console.error('[ServerMode] Starting structured server mode');
+  console.error('[ServerMode] Version:', version);
+  console.error('[ServerMode] Workspace:', workspaceRoot);
+  console.error('[ServerMode] Model:', config.getModel());
+
+  // Send init message
+  const initMsg = createInitMessage(
+    version,
+    workspaceRoot,
+    config.getModel(),
+  );
+  await server.sendMessage(initMsg);
+
+  // Start headless mode (no Ink rendering)
+  // We'll track state changes directly instead of rendering to terminal
+  // For now, this is a simplified implementation that doesn't run the full UI
+  // TODO: Implement proper headless mode that runs App logic without rendering
+
+  console.error('[ServerMode] Server mode is running...');
+  console.error(
+    '[ServerMode] NOTE: This is a preliminary implementation.',
+  );
+  console.error(
+    '[ServerMode] Full integration with App state requires additional work.',
+  );
+
+  // Simple echo loop for testing
+  while (server.isRunning()) {
+    const cmd = await server.receiveCommand();
+    if (cmd) {
+      console.error('[ServerMode] Received command:', cmd.type);
+
+      if (cmd.type === 'user_input') {
+        // Send back as conversation message (echo for now)
+        await server.sendMessage({
+          type: 'conversation',
+          role: 'user',
+          content: cmd.content,
+          id: Date.now(),
+        });
+
+        // TODO: Actually process the input through qwen-code
+        // This requires hooking into the App's submitQuery function
+      } else if (cmd.type === 'interrupt') {
+        console.error('[ServerMode] Interrupt received, shutting down');
+        break;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  await server.stop();
+  console.error('[ServerMode] Server mode stopped');
 }
 
 export async function main() {
@@ -330,6 +405,24 @@ export async function main() {
   ) {
     // Do oauth before app renders to make copying the link possible.
     await getOauthClient(settings.merged.security.auth.selectedType, config);
+  }
+
+  // Check for server mode
+  if (argv.serverMode) {
+    const server = createStructuredServer({
+      mode: argv.serverMode as 'stdin' | 'pipe' | 'tcp',
+      pipePath: argv.pipePath,
+      tcpPort: argv.tcpPort,
+    });
+
+    await server.start();
+
+    const startupWarnings = [
+      ...(await getStartupWarnings()),
+      ...(await getUserStartupWarnings(workspaceRoot)),
+    ];
+
+    return runServerMode(config, settings, startupWarnings, workspaceRoot, server);
   }
 
   if (config.getExperimentalZedIntegration()) {
