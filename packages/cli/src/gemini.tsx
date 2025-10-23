@@ -198,11 +198,20 @@ export async function runServerMode(
 
   // Get GeminiClient from config
   const geminiClient = config.getGeminiClient();
+  console.error('[ServerMode] GeminiClient check:', {
+    exists: !!geminiClient,
+    isInitialized: geminiClient ? geminiClient.isInitialized() : false,
+    model: config.getModel(),
+    authConfig: config.getContentGeneratorConfig()?.authType,
+  });
+
   if (!geminiClient) {
     console.error('[ServerMode] ERROR: GeminiClient not available');
+    console.error('[ServerMode] This usually means authentication is not configured');
+    console.error('[ServerMode] Please set OPENAI_API_KEY or configure auth in settings');
     await server.sendMessage({
       type: 'error',
-      message: 'GeminiClient not initialized',
+      message: 'GeminiClient not initialized - check authentication configuration',
       id: Date.now(),
     });
     await server.stop();
@@ -211,7 +220,7 @@ export async function runServerMode(
 
   // Initialize client if needed
   if (!geminiClient.isInitialized()) {
-    console.error('[ServerMode] Initializing GeminiClient...');
+    console.error('[ServerMode] GeminiClient exists but not initialized, initializing now...');
     try {
       await config.initialize();
       console.error('[ServerMode] GeminiClient initialized successfully');
@@ -613,6 +622,70 @@ export async function main() {
 
   // Check for server mode
   if (argv.serverMode) {
+    // For server mode, ensure authentication is configured
+    // If no auth is configured but we have an OPENAI_API_KEY, use OpenAI
+    if (
+      !config.getContentGeneratorConfig()?.authType &&
+      process.env['OPENAI_API_KEY']
+    ) {
+      console.error(
+        '[ServerMode] No auth configured, defaulting to OPENAI_ANON with OPENAI_API_KEY',
+      );
+      // Set OpenAI as the auth type
+      if (!settings.merged.security) {
+        settings.merged.security = {};
+      }
+      if (!settings.merged.security.auth) {
+        settings.merged.security.auth = {};
+      }
+      settings.merged.security.auth.selectedType = AuthType.OPENAI_ANON;
+
+      // Reload config with the updated settings
+      const updatedConfig = await loadCliConfig(
+        settings.merged,
+        extensions,
+        sessionId,
+        argv,
+      );
+      console.error('[ServerMode] Config reloaded, auth type:', {
+        authType: updatedConfig.getContentGeneratorConfig()?.authType,
+        hasGeminiClient: !!updatedConfig.getGeminiClient(),
+      });
+
+      await updatedConfig.initialize();
+
+      console.error('[ServerMode] After initialize():', {
+        authType: updatedConfig.getContentGeneratorConfig()?.authType,
+        hasGeminiClient: !!updatedConfig.getGeminiClient(),
+        isInitialized: updatedConfig.getGeminiClient()
+          ? updatedConfig.getGeminiClient().isInitialized()
+          : false,
+      });
+
+      console.error('[ServerMode] Initialized with OpenAI authentication');
+
+      const server = createStructuredServer({
+        mode: argv.serverMode as 'stdin' | 'pipe' | 'tcp',
+        pipePath: argv.pipePath,
+        tcpPort: argv.tcpPort,
+      });
+
+      await server.start();
+
+      const startupWarnings = [
+        ...(await getStartupWarnings()),
+        ...(await getUserStartupWarnings(workspaceRoot)),
+      ];
+
+      return runServerMode(
+        updatedConfig,
+        settings,
+        startupWarnings,
+        workspaceRoot,
+        server,
+      );
+    }
+
     const server = createStructuredServer({
       mode: argv.serverMode as 'stdin' | 'pipe' | 'tcp',
       pipePath: argv.pipePath,
