@@ -622,69 +622,12 @@ export async function main() {
 
   // Check for server mode
   if (argv.serverMode) {
-    // For server mode, ensure authentication is configured
-    // If no auth is configured but we have an OPENAI_API_KEY, use OpenAI
-    if (
-      !config.getContentGeneratorConfig()?.authType &&
-      process.env['OPENAI_API_KEY']
-    ) {
-      console.error(
-        '[ServerMode] No auth configured, defaulting to OPENAI_ANON with OPENAI_API_KEY',
-      );
-      // Set OpenAI as the auth type
-      if (!settings.merged.security) {
-        settings.merged.security = {};
-      }
-      if (!settings.merged.security.auth) {
-        settings.merged.security.auth = {};
-      }
-      settings.merged.security.auth.selectedType = AuthType.OPENAI_ANON;
-
-      // Reload config with the updated settings
-      const updatedConfig = await loadCliConfig(
-        settings.merged,
-        extensions,
-        sessionId,
-        argv,
-      );
-      console.error('[ServerMode] Config reloaded, auth type:', {
-        authType: updatedConfig.getContentGeneratorConfig()?.authType,
-        hasGeminiClient: !!updatedConfig.getGeminiClient(),
-      });
-
-      await updatedConfig.initialize();
-
-      console.error('[ServerMode] After initialize():', {
-        authType: updatedConfig.getContentGeneratorConfig()?.authType,
-        hasGeminiClient: !!updatedConfig.getGeminiClient(),
-        isInitialized: updatedConfig.getGeminiClient()
-          ? updatedConfig.getGeminiClient().isInitialized()
-          : false,
-      });
-
-      console.error('[ServerMode] Initialized with OpenAI authentication');
-
-      const server = createStructuredServer({
-        mode: argv.serverMode as 'stdin' | 'pipe' | 'tcp',
-        pipePath: argv.pipePath,
-        tcpPort: argv.tcpPort,
-      });
-
-      await server.start();
-
-      const startupWarnings = [
-        ...(await getStartupWarnings()),
-        ...(await getUserStartupWarnings(workspaceRoot)),
-      ];
-
-      return runServerMode(
-        updatedConfig,
-        settings,
-        startupWarnings,
-        workspaceRoot,
-        server,
-      );
-    }
+    console.error('[ServerMode] Starting server mode');
+    console.error('[ServerMode] Auth config:', {
+      authType: config.getContentGeneratorConfig()?.authType,
+      hasGeminiClient: !!config.getGeminiClient(),
+      geminiInitialized: config.getGeminiClient()?.isInitialized(),
+    });
 
     const server = createStructuredServer({
       mode: argv.serverMode as 'stdin' | 'pipe' | 'tcp',

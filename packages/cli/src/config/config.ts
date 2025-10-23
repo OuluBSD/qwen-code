@@ -12,6 +12,7 @@ import type {
 } from '@qwen-code/qwen-code-core';
 import {
   ApprovalMode,
+  AuthType,
   Config,
   DEFAULT_GEMINI_EMBEDDING_MODEL,
   DEFAULT_GEMINI_MODEL,
@@ -579,6 +580,29 @@ export async function loadCliConfig(
 
   const vlmSwitchMode =
     argv.vlmSwitchMode || settings.experimental?.vlmSwitchMode;
+
+  // Auto-detect authType only if not set in settings
+  // Preserve user's configured auth (like qwen-oauth) when present
+  let authType = settings.security?.auth?.selectedType;
+  console.error('[Config] Auth detection:', {
+    settingsAuthType: authType,
+    typeofAuthType: typeof authType,
+    hasEnvKey: !!process.env['OPENAI_API_KEY'],
+    envKeyLength: process.env['OPENAI_API_KEY']?.length || 0,
+  });
+
+  // Only auto-detect OpenAI if there's no configured authType
+  if ((!authType || authType === '') && process.env['OPENAI_API_KEY']) {
+    authType = AuthType.USE_OPENAI;
+    console.error(
+      '[Config] Auto-detected AuthType.USE_OPENAI from OPENAI_API_KEY environment variable',
+    );
+  } else if (authType) {
+    console.error('[Config] Using authType from settings:', authType);
+  } else {
+    console.error('[Config] No authType configured');
+  }
+
   return new Config({
     sessionId,
     embeddingModel: DEFAULT_GEMINI_EMBEDDING_MODEL,
@@ -666,7 +690,7 @@ export async function loadCliConfig(
           'SYSTEM_TEMPLATE:{"name":"qwen3_coder","params":{"is_git_repository":{RUNTIME_VARS_IS_GIT_REPO},"sandbox":"{RUNTIME_VARS_SANDBOX}"}}',
       },
     ]) as ConfigParameters['systemPromptMappings'],
-    authType: settings.security?.auth?.selectedType,
+    authType,
     contentGenerator: settings.contentGenerator,
     cliVersion,
     tavilyApiKey:
