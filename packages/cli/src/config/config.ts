@@ -592,7 +592,7 @@ export async function loadCliConfig(
   });
 
   // Only auto-detect OpenAI if there's no configured authType
-  if ((!authType || authType === '') && process.env['OPENAI_API_KEY']) {
+  if (!authType && process.env['OPENAI_API_KEY']) {
     authType = AuthType.USE_OPENAI;
     console.error(
       '[Config] Auto-detected AuthType.USE_OPENAI from OPENAI_API_KEY environment variable',

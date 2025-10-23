@@ -205,35 +205,16 @@ export async function runServerMode(
     authConfig: config.getContentGeneratorConfig()?.authType,
   });
 
-  if (!geminiClient) {
-    console.error('[ServerMode] ERROR: GeminiClient not available');
-    console.error('[ServerMode] This usually means authentication is not configured');
-    console.error('[ServerMode] Please set OPENAI_API_KEY or configure auth in settings');
+  if (!geminiClient || !geminiClient.isInitialized()) {
+    console.error('[ServerMode] ERROR: GeminiClient not available or not initialized');
+    console.error('[ServerMode] This should not happen - auth was initialized before runServerMode');
     await server.sendMessage({
       type: 'error',
-      message: 'GeminiClient not initialized - check authentication configuration',
+      message: 'GeminiClient not initialized - internal error',
       id: Date.now(),
     });
     await server.stop();
     return;
-  }
-
-  // Initialize client if needed
-  if (!geminiClient.isInitialized()) {
-    console.error('[ServerMode] GeminiClient exists but not initialized, initializing now...');
-    try {
-      await config.initialize();
-      console.error('[ServerMode] GeminiClient initialized successfully');
-    } catch (error) {
-      console.error('[ServerMode] Failed to initialize GeminiClient:', error);
-      await server.sendMessage({
-        type: 'error',
-        message: `Failed to initialize AI client: ${error}`,
-        id: Date.now(),
-      });
-      await server.stop();
-      return;
-    }
   }
 
   console.error('[ServerMode] Server mode is running with real AI...');
@@ -623,6 +604,38 @@ export async function main() {
   // Check for server mode
   if (argv.serverMode) {
     console.error('[ServerMode] Starting server mode');
+
+    // Initialize authentication before starting server mode
+    const authType = settings.merged.security?.auth?.selectedType || config.getAuthType();
+    if (authType) {
+      console.error('[ServerMode] Initializing auth with type:', authType);
+      try {
+        await config.refreshAuth(authType);
+        console.error('[ServerMode] Auth initialized successfully');
+      } catch (error) {
+        console.error('[ServerMode] Failed to initialize auth:', error);
+        process.exit(1);
+      }
+    } else {
+      console.error('[ServerMode] No auth type configured - checking environment');
+      // Try to detect from environment variables (similar to validateNonInteractiveAuth)
+      let detectedAuthType: AuthType | undefined;
+      if (process.env['OPENAI_API_KEY']) {
+        detectedAuthType = AuthType.USE_OPENAI;
+      } else if (process.env['GEMINI_API_KEY']) {
+        detectedAuthType = AuthType.USE_GEMINI;
+      }
+
+      if (detectedAuthType) {
+        console.error('[ServerMode] Detected auth type from environment:', detectedAuthType);
+        await config.refreshAuth(detectedAuthType);
+      } else {
+        console.error('[ServerMode] ERROR: No authentication configured');
+        console.error('[ServerMode] Please set OPENAI_API_KEY or configure auth in settings');
+        process.exit(1);
+      }
+    }
+
     console.error('[ServerMode] Auth config:', {
       authType: config.getContentGeneratorConfig()?.authType,
       hasGeminiClient: !!config.getGeminiClient(),
