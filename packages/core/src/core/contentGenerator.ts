@@ -15,7 +15,7 @@ import type {
 import { GoogleGenAI } from '@google/genai';
 import { createCodeAssistContentGenerator } from '../code_assist/codeAssist.js';
 import type { Config } from '../config/config.js';
-import { DEFAULT_GEMINI_MODEL, DEFAULT_QWEN_MODEL } from '../config/models.js';
+import { DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_QWEN_MODEL } from '../config/models.js';
 
 import type { UserTierId } from '../code_assist/types.js';
 import { InstallationManager } from '../utils/installationManager.js';
@@ -133,7 +133,7 @@ export function createContentGeneratorConfig(
   if (authType === AuthType.USE_OPENAI && openaiApiKey) {
     contentGeneratorConfig.apiKey = openaiApiKey;
     contentGeneratorConfig.baseUrl = openaiBaseUrl;
-    contentGeneratorConfig.model = openaiModel || DEFAULT_QWEN_MODEL;
+    contentGeneratorConfig.model = openaiModel || DEFAULT_OPENAI_MODEL;
 
     return contentGeneratorConfig;
   }

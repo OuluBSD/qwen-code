@@ -402,19 +402,118 @@ export async function runServerMode(
         await server.sendMessage({
           type: 'status',
           state: 'responding',
-          message: 'Executing tool...',
+          message: `Executing tool: ${toolInfo.name}...`,
         });
 
-        // TODO: Implement real tool execution
-        // For now, tools will be executed automatically by the GeminiClient
-        // This requires integration with the tool scheduler and executor
-        await server.sendMessage({
-          type: 'info',
-          message: `Tool ${toolInfo.name} approved - execution handling TBD`,
-          id: Date.now(),
-        });
+        try {
+          // Execute the tool
+          const { executeToolCall } = await import(
+            '@qwen-code/qwen-code-core'
+          );
 
-        pendingToolCalls.delete(cmd.tool_id);
+          const toolResponse = await executeToolCall(
+            config,
+            toolInfo,
+            new AbortController().signal,
+          );
+
+          // Send tool result notification
+          await server.sendMessage({
+            type: 'info',
+            message: `Tool ${toolInfo.name} executed successfully`,
+            id: Date.now(),
+          });
+
+          // Continue the AI conversation with tool results
+          if (toolResponse.responseParts) {
+            await server.sendMessage({
+              type: 'status',
+              state: 'responding',
+              message: 'Processing tool results...',
+            });
+
+            // Create new stream with tool results as user message (Parts)
+            const stream = geminiClient.sendMessageStream(
+              toolResponse.responseParts,
+              new AbortController().signal,
+              `tool-result-${Date.now()}`,
+            );
+
+            // Process the new stream (same as original user_input handling)
+            let contentBuffer = '';
+            let messageId = Date.now();
+            let hasStartedStreaming = false;
+
+            for await (const event of stream) {
+              switch (event.type) {
+                case GeminiEventType.Content:
+                  contentBuffer += event.value;
+                  hasStartedStreaming = true;
+                  await server.sendMessage({
+                    type: 'conversation',
+                    role: 'assistant',
+                    content: event.value,
+                    id: messageId,
+                    isStreaming: true,
+                  });
+                  break;
+
+                case GeminiEventType.ToolCallRequest:
+                  const newToolInfo = event.value;
+                  pendingToolCalls.set(newToolInfo.callId, newToolInfo);
+                  await server.sendMessage({
+                    type: 'tool_group',
+                    id: Date.now(),
+                    tools: [
+                      {
+                        type: 'tool_call',
+                        tool_id: newToolInfo.callId,
+                        tool_name: newToolInfo.name,
+                        status: 'pending',
+                        args: newToolInfo.args,
+                        confirmation_details: {
+                          message: `Execute ${newToolInfo.name} with args: ${JSON.stringify(newToolInfo.args)}`,
+                          requires_approval: true,
+                        },
+                      },
+                    ],
+                  });
+                  break;
+
+                case GeminiEventType.Finished:
+                  if (hasStartedStreaming) {
+                    await server.sendMessage({
+                      type: 'conversation',
+                      role: 'assistant',
+                      content: '',
+                      id: messageId,
+                      isStreaming: false,
+                    });
+                  }
+                  console.error('[ServerMode] Tool result stream finished');
+                  break;
+
+                case GeminiEventType.Error:
+                  await server.sendMessage({
+                    type: 'error',
+                    message: event.value.error?.message || 'Unknown error',
+                    id: Date.now(),
+                  });
+                  break;
+              }
+            }
+          }
+
+          pendingToolCalls.delete(cmd.tool_id);
+        } catch (error: any) {
+          console.error('[ServerMode] Tool execution error:', error);
+          await server.sendMessage({
+            type: 'error',
+            message: `Tool execution failed: ${error?.message || 'Unknown error'}`,
+            id: Date.now(),
+          });
+          pendingToolCalls.delete(cmd.tool_id);
+        }
       } else {
         await server.sendMessage({
           type: 'info',
