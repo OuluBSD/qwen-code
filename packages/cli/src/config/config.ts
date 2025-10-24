@@ -581,11 +581,12 @@ export async function loadCliConfig(
   const vlmSwitchMode =
     argv.vlmSwitchMode || settings.experimental?.vlmSwitchMode;
 
-  // Auto-detect authType only if not set in settings
-  // Preserve user's configured auth (like qwen-oauth) when present
-  let authType = settings.security?.auth?.selectedType;
+  // Auto-detect authType with priority: QWEN_AUTH_TYPE env var > settings > OPENAI_API_KEY auto-detect
+  // This allows running multiple servers with different auth types simultaneously
+  let authType = (process.env['QWEN_AUTH_TYPE'] as AuthType | undefined) || settings.security?.auth?.selectedType;
   console.error('[Config] Auth detection:', {
-    settingsAuthType: authType,
+    envAuthType: process.env['QWEN_AUTH_TYPE'],
+    settingsAuthType: settings.security?.auth?.selectedType,
     typeofAuthType: typeof authType,
     hasEnvKey: !!process.env['OPENAI_API_KEY'],
     envKeyLength: process.env['OPENAI_API_KEY']?.length || 0,
@@ -598,7 +599,8 @@ export async function loadCliConfig(
       '[Config] Auto-detected AuthType.USE_OPENAI from OPENAI_API_KEY environment variable',
     );
   } else if (authType) {
-    console.error('[Config] Using authType from settings:', authType);
+    const source = process.env['QWEN_AUTH_TYPE'] ? 'QWEN_AUTH_TYPE env var' : 'settings';
+    console.error(`[Config] Using authType from ${source}:`, authType);
   } else {
     console.error('[Config] No authType configured');
   }

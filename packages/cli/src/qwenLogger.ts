@@ -39,14 +39,14 @@ export class QwenLogger {
     this.pid = process.pid;
 
     // Check environment for log file
-    if (process.env.QWEN_LOG_FILE) {
-      this.logFilePath = process.env.QWEN_LOG_FILE;
+    if (process.env['QWEN_LOG_FILE']) {
+      this.logFilePath = process.env['QWEN_LOG_FILE'];
       this.useFile = true;
     }
 
     // Check environment for log level
-    if (process.env.QWEN_LOG_LEVEL) {
-      const levelStr = process.env.QWEN_LOG_LEVEL.toUpperCase();
+    if (process.env['QWEN_LOG_LEVEL']) {
+      const levelStr = process.env['QWEN_LOG_LEVEL'].toUpperCase();
       switch (levelStr) {
         case "DEBUG": this.minLevel = LogLevel.DEBUG; break;
         case "INFO": this.minLevel = LogLevel.INFO; break;
