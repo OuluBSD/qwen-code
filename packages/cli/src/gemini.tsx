@@ -606,7 +606,8 @@ export async function main() {
     console.error('[ServerMode] Starting server mode');
 
     // Initialize authentication before starting server mode
-    const authType = settings.merged.security?.auth?.selectedType || config.getAuthType();
+    // Use config.getAuthType() first as it respects QWEN_AUTH_TYPE env var
+    const authType = config.getAuthType() || settings.merged.security?.auth?.selectedType;
     if (authType) {
       console.error('[ServerMode] Initializing auth with type:', authType);
       try {
