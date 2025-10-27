@@ -14,16 +14,9 @@ import { SchemaValidator } from '../utils/schemaValidator.js';
 import { makeRelative, shortenPath } from '../utils/paths.js';
 import { getErrorMessage, isNodeError } from '../utils/errors.js';
 import type { Config } from '../config/config.js';
+import { ensureRipgrepPath } from '../utils/ripgrepUtils.js';
 
 const DEFAULT_TOTAL_MAX_MATCHES = 20000;
-
-/**
- * Lazy loads the ripgrep binary path to avoid loading the library until needed
- */
-async function getRipgrepPath(): Promise<string> {
-  const { rgPath } = await import('@lvce-editor/ripgrep');
-  return rgPath;
-}
 
 /**
  * Parameters for the GrepTool
@@ -299,9 +292,9 @@ class GrepToolInvocation extends BaseToolInvocation<
     rgArgs.push(absolutePath);
 
     try {
-      const ripgrepPath = await getRipgrepPath();
+      const rgPath = await ensureRipgrepPath();
       const output = await new Promise<string>((resolve, reject) => {
-        const child = spawn(ripgrepPath, rgArgs, {
+        const child = spawn(rgPath, rgArgs, {
           windowsHide: true,
         });
 
@@ -321,11 +314,7 @@ class GrepToolInvocation extends BaseToolInvocation<
 
         child.on('error', (err) => {
           options.signal.removeEventListener('abort', cleanup);
-          reject(
-            new Error(
-              `Failed to start ripgrep: ${err.message}. Please ensure @lvce-editor/ripgrep is properly installed.`,
-            ),
-          );
+          reject(new Error(`Failed to start ripgrep: ${err.message}.`));
         });
 
         child.on('close', (code) => {

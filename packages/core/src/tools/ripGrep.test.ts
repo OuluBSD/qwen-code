@@ -4,7 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  vi,
+  type Mock,
+} from 'vitest';
 import type { RipGrepToolParams } from './ripGrep.js';
 import { RipGrepTool } from './ripGrep.js';
 import path from 'node:path';
@@ -14,10 +22,11 @@ import type { Config } from '../config/config.js';
 import { createMockWorkspaceContext } from '../test-utils/mockWorkspaceContext.js';
 import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
+import { ensureRipgrepPath } from '../utils/ripgrepUtils.js';
 
-// Mock @lvce-editor/ripgrep for testing
-vi.mock('@lvce-editor/ripgrep', () => ({
-  rgPath: '/mock/rg/path',
+// Mock ripgrepUtils
+vi.mock('../utils/ripgrepUtils.js', () => ({
+  ensureRipgrepPath: vi.fn(),
 }));
 
 // Mock child_process for ripgrep calls
@@ -88,6 +97,7 @@ describe('RipGrepTool', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    (ensureRipgrepPath as Mock).mockResolvedValue('/mock/path/to/rg');
     mockSpawn.mockClear();
     tempRootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'grep-tool-root-'));
     grepTool = new RipGrepTool(mockConfig);
@@ -433,6 +443,22 @@ describe('RipGrepTool', () => {
       expect(() => grepTool.build(params)).toThrow(
         /params must have required property 'pattern'/,
       );
+    });
+
+    it('should throw an error if ripgrep is not available', async () => {
+      // Make ensureRipgrepBinary throw
+      (ensureRipgrepPath as Mock).mockRejectedValue(
+        new Error('Ripgrep binary not found'),
+      );
+
+      const params: RipGrepToolParams = { pattern: 'world' };
+      const invocation = grepTool.build(params);
+
+      expect(await invocation.execute(abortSignal)).toStrictEqual({
+        llmContent:
+          'Error during grep search operation: Ripgrep binary not found',
+        returnDisplay: 'Error: Ripgrep binary not found',
+      });
     });
   });
 
