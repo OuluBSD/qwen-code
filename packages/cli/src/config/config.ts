@@ -125,6 +125,9 @@ export interface CliArgs {
   screenReader: boolean | undefined;
   useSmartEdit: boolean | undefined;
   outputFormat: string | undefined;
+  serverMode: string | undefined;
+  pipePath: string | undefined;
+  tcpPort: number | undefined;
 }
 
 export async function parseArguments(settings: Settings): Promise<CliArgs> {
@@ -190,6 +193,18 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
       'telemetry-outfile',
       'Use the "telemetry.outfile" setting in settings.json instead. This flag will be removed in a future version.',
     )
+    .option('server-mode', {
+      type: 'string',
+      description: 'Run in server mode (stdin, pipe, or tcp)',
+    })
+    .option('pipe-path', {
+      type: 'string',
+      description: 'Named pipe path for server mode',
+    })
+    .option('tcp-port', {
+      type: 'number',
+      description: 'TCP port for server mode',
+    })
     .option('debug', {
       alias: 'd',
       type: 'boolean',

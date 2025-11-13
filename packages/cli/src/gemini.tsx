@@ -59,6 +59,9 @@ import {
 } from './utils/relaunch.js';
 import { validateNonInteractiveAuth } from './validateNonInterActiveAuth.js';
 import { runZedIntegration } from './zed-integration/zedIntegration.js';
+import { createStructuredServer } from './structuredServerMode.js';
+import type { BaseStructuredServer } from './structuredServerMode.js';
+import { createInitMessage } from './qwenStateSerializer.js';
 
 export function validateDnsResolutionOrder(
   order: string | undefined,
@@ -748,6 +751,68 @@ export async function main() {
 
     if (config.getExperimentalZedIntegration()) {
       return runZedIntegration(config, settings, extensions, argv);
+    }
+
+    // Check for server mode
+    if (argv.serverMode) {
+      console.error('[ServerMode] Starting server mode');
+
+      // Initialize authentication before starting server mode
+      // Use config.getAuthType() first as it respects QWEN_AUTH_TYPE env var
+      const authType = config.getAuthType() || settings.merged.security?.auth?.selectedType;
+      if (authType) {
+        console.error('[ServerMode] Initializing auth with type:', authType);
+        try {
+          await config.refreshAuth(authType);
+          console.error('[ServerMode] Auth initialized successfully');
+        } catch (error) {
+          console.error('[ServerMode] Failed to initialize auth:', error);
+          process.exit(1);
+        }
+      } else {
+        console.error('[ServerMode] No auth type configured - checking environment');
+        // Try to detect from environment variables (similar to validateNonInteractiveAuth)
+        let detectedAuthType: AuthType | undefined;
+        if (process.env['OPENAI_API_KEY']) {
+          detectedAuthType = AuthType.USE_OPENAI;
+        } else if (process.env['GEMINI_API_KEY']) {
+          detectedAuthType = AuthType.USE_GEMINI;
+        }
+
+        if (detectedAuthType) {
+          console.error('[ServerMode] Detected auth type from environment:', detectedAuthType);
+          await config.refreshAuth(detectedAuthType);
+        } else {
+          console.error('[ServerMode] ERROR: No authentication configured');
+          console.error('[ServerMode] Please set OPENAI_API_KEY or configure auth in settings');
+          process.exit(1);
+        }
+      }
+
+      console.error('[ServerMode] Auth config:', {
+        authType: config.getContentGeneratorConfig()?.authType,
+        hasGeminiClient: !!config.getGeminiClient(),
+        geminiInitialized: config.getGeminiClient()?.isInitialized(),
+      });
+
+      const server = createStructuredServer({
+        mode: argv.serverMode as 'stdin' | 'pipe' | 'tcp',
+        pipePath: argv.pipePath,
+        tcpPort: argv.tcpPort,
+      });
+
+      await server.start();
+
+      const startupWarnings = [
+        ...(await getStartupWarnings()),
+        ...(await getUserStartupWarnings({
+          workspaceRoot: process.cwd(),
+          useRipgrep: settings.merged.tools?.useRipgrep ?? true,
+          useBuiltinRipgrep: settings.merged.tools?.useBuiltinRipgrep ?? true,
+        })),
+      ];
+
+      return runServerMode(config, settings, startupWarnings, process.cwd(), server);
     }
 
     let input = config.getQuestion();
