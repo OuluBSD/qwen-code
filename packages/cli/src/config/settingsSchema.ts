@@ -12,6 +12,7 @@ import type {
   ChatCompressionSettings,
 } from '@qwen-code/qwen-code-core';
 import {
+  ApprovalMode,
   DEFAULT_TRUNCATE_TOOL_OUTPUT_LINES,
   DEFAULT_TRUNCATE_TOOL_OUTPUT_THRESHOLD,
 } from '@qwen-code/qwen-code-core';
@@ -549,6 +550,16 @@ const SETTINGS_SCHEMA = {
         description: 'Disable all loop detection checks (streaming and LLM).',
         showInDialog: true,
       },
+      skipStartupContext: {
+        type: 'boolean',
+        label: 'Skip Startup Context',
+        category: 'Model',
+        requiresRestart: true,
+        default: false,
+        description:
+          'Avoid sending the workspace startup context at the beginning of each session.',
+        showInDialog: true,
+      },
       enableOpenAILogging: {
         type: 'boolean',
         label: 'Enable OpenAI Logging',
@@ -556,6 +567,16 @@ const SETTINGS_SCHEMA = {
         requiresRestart: false,
         default: false,
         description: 'Enable OpenAI logging.',
+        showInDialog: true,
+      },
+      openAILoggingDir: {
+        type: 'string',
+        label: 'OpenAI Logging Directory',
+        category: 'Model',
+        requiresRestart: false,
+        default: undefined as string | undefined,
+        description:
+          'Custom directory path for OpenAI API logs. If not specified, defaults to logs/openai in the current working directory.',
         showInDialog: true,
       },
       generationConfig: {
@@ -810,14 +831,20 @@ const SETTINGS_SCHEMA = {
         mergeStrategy: MergeStrategy.UNION,
       },
       approvalMode: {
-        type: 'string',
-        label: 'Default Approval Mode',
+        type: 'enum',
+        label: 'Approval Mode',
         category: 'Tools',
         requiresRestart: false,
-        default: 'default',
+        default: ApprovalMode.DEFAULT,
         description:
-          'Default approval mode for tool usage. Valid values: plan, default, auto-edit, yolo.',
+          'Approval mode for tool usage. Controls how tools are approved before execution.',
         showInDialog: true,
+        options: [
+          { value: ApprovalMode.PLAN, label: 'Plan' },
+          { value: ApprovalMode.DEFAULT, label: 'Default' },
+          { value: ApprovalMode.AUTO_EDIT, label: 'Auto Edit' },
+          { value: ApprovalMode.YOLO, label: 'YOLO' },
+        ],
       },
       discoveryCommand: {
         type: 'string',
@@ -845,6 +872,16 @@ const SETTINGS_SCHEMA = {
         default: true,
         description:
           'Use ripgrep for file content search instead of the fallback implementation. Provides faster search performance.',
+        showInDialog: true,
+      },
+      useBuiltinRipgrep: {
+        type: 'boolean',
+        label: 'Use Builtin Ripgrep',
+        category: 'Tools',
+        requiresRestart: false,
+        default: true,
+        description:
+          'Use the bundled ripgrep binary. When set to false, the system-level "rg" command will be used instead. This setting is only effective when useRipgrep is true.',
         showInDialog: true,
       },
       enableToolOutputTruncation: {
@@ -991,6 +1028,24 @@ const SETTINGS_SCHEMA = {
             description: 'Whether to use an external authentication flow.',
             showInDialog: false,
           },
+          apiKey: {
+            type: 'string',
+            label: 'API Key',
+            category: 'Security',
+            requiresRestart: true,
+            default: undefined as string | undefined,
+            description: 'API key for OpenAI compatible authentication.',
+            showInDialog: false,
+          },
+          baseUrl: {
+            type: 'string',
+            label: 'Base URL',
+            category: 'Security',
+            requiresRestart: true,
+            default: undefined as string | undefined,
+            description: 'Base URL for OpenAI compatible API.',
+            showInDialog: false,
+          },
         },
       },
     },
@@ -1044,15 +1099,34 @@ const SETTINGS_SCHEMA = {
       },
       tavilyApiKey: {
         type: 'string',
-        label: 'Tavily API Key',
+        label: 'Tavily API Key (Deprecated)',
         category: 'Advanced',
         requiresRestart: false,
         default: undefined as string | undefined,
         description:
-          'The API key for the Tavily API. Required to enable the web_search tool functionality.',
+          '⚠️ DEPRECATED: Please use webSearch.provider configuration instead. Legacy API key for the Tavily API.',
         showInDialog: false,
       },
     },
+  },
+
+  webSearch: {
+    type: 'object',
+    label: 'Web Search',
+    category: 'Advanced',
+    requiresRestart: true,
+    default: undefined as
+      | {
+          provider: Array<{
+            type: 'tavily' | 'google' | 'dashscope';
+            apiKey?: string;
+            searchEngineId?: string;
+          }>;
+          default: string;
+        }
+      | undefined,
+    description: 'Configuration for web search providers.',
+    showInDialog: false,
   },
 
   experimental: {

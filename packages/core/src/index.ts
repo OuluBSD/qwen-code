@@ -48,6 +48,7 @@ export * from './utils/systemEncoding.js';
 export * from './utils/textUtils.js';
 export * from './utils/formatters.js';
 export * from './utils/generateContentResponseUtilities.js';
+export * from './utils/ripgrepUtils.js';
 export * from './utils/filesearch/fileSearch.js';
 export * from './utils/errorParsing.js';
 export * from './utils/workspaceContext.js';
@@ -97,10 +98,12 @@ export * from './tools/write-file.js';
 export * from './tools/web-fetch.js';
 export * from './tools/memoryTool.js';
 export * from './tools/shell.js';
-export * from './tools/web-search.js';
+export * from './tools/web-search/index.js';
 export * from './tools/read-many-files.js';
 export * from './tools/mcp-client.js';
 export * from './tools/mcp-tool.js';
+export * from './tools/task.js';
+export * from './tools/todoWrite.js';
 
 // MCP OAuth
 export { MCPOAuthProvider } from './mcp/oauth-provider.js';

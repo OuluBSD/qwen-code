@@ -16,6 +16,7 @@ import {
   QwenLogger,
 } from '../telemetry/index.js';
 import type { ContentGeneratorConfig } from '../core/contentGenerator.js';
+import { DEFAULT_DASHSCOPE_BASE_URL } from '../core/openaiContentGenerator/constants.js';
 import {
   AuthType,
   createContentGeneratorConfig,
@@ -43,6 +44,15 @@ import { RipGrepTool } from '../tools/ripGrep.js';
 import { logRipgrepFallback } from '../telemetry/loggers.js';
 import { RipgrepFallbackEvent } from '../telemetry/types.js';
 import { ToolRegistry } from '../tools/tool-registry.js';
+
+function createToolMock(toolName: string) {
+  const ToolMock = vi.fn();
+  Object.defineProperty(ToolMock, 'Name', {
+    value: toolName,
+    writable: true,
+  });
+  return ToolMock;
+}
 
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
@@ -72,23 +82,41 @@ vi.mock('../utils/memoryDiscovery.js', () => ({
 }));
 
 // Mock individual tools if their constructors are complex or have side effects
-vi.mock('../tools/ls');
-vi.mock('../tools/read-file');
-vi.mock('../tools/grep.js');
+vi.mock('../tools/ls', () => ({
+  LSTool: createToolMock('list_directory'),
+}));
+vi.mock('../tools/read-file', () => ({
+  ReadFileTool: createToolMock('read_file'),
+}));
+vi.mock('../tools/grep.js', () => ({
+  GrepTool: createToolMock('grep_search'),
+}));
 vi.mock('../tools/ripGrep.js', () => ({
-  RipGrepTool: class MockRipGrepTool {},
+  RipGrepTool: createToolMock('grep_search'),
 }));
 vi.mock('../utils/ripgrepUtils.js', () => ({
   canUseRipgrep: vi.fn(),
 }));
-vi.mock('../tools/glob');
-vi.mock('../tools/edit');
-vi.mock('../tools/shell');
-vi.mock('../tools/write-file');
-vi.mock('../tools/web-fetch');
-vi.mock('../tools/read-many-files');
+vi.mock('../tools/glob', () => ({
+  GlobTool: createToolMock('glob'),
+}));
+vi.mock('../tools/edit', () => ({
+  EditTool: createToolMock('edit'),
+}));
+vi.mock('../tools/shell', () => ({
+  ShellTool: createToolMock('run_shell_command'),
+}));
+vi.mock('../tools/write-file', () => ({
+  WriteFileTool: createToolMock('write_file'),
+}));
+vi.mock('../tools/web-fetch', () => ({
+  WebFetchTool: createToolMock('web_fetch'),
+}));
+vi.mock('../tools/read-many-files', () => ({
+  ReadManyFilesTool: createToolMock('read_many_files'),
+}));
 vi.mock('../tools/memoryTool', () => ({
-  MemoryTool: vi.fn(),
+  MemoryTool: createToolMock('save_memory'),
   setGeminiMdFilename: vi.fn(),
   getCurrentGeminiMdFilename: vi.fn(() => 'QWEN.md'), // Mock the original filename
   DEFAULT_CONTEXT_FILENAME: 'QWEN.md',
@@ -153,6 +181,11 @@ vi.mock('../core/tokenLimits.js', () => ({
 
 describe('Server Config (config.ts)', () => {
   const MODEL = 'qwen3-coder-plus';
+
+  // Default mock for canUseRipgrep to return true (tests that care about ripgrep will override this)
+  beforeEach(() => {
+    vi.mocked(canUseRipgrep).mockResolvedValue(true);
+  });
   const SANDBOX: SandboxConfig = {
     command: 'docker',
     image: 'qwen-code-sandbox',
@@ -250,6 +283,7 @@ describe('Server Config (config.ts)', () => {
         authType,
         {
           model: MODEL,
+          baseUrl: DEFAULT_DASHSCOPE_BASE_URL,
         },
       );
       // Verify that contentGeneratorConfig is updated
@@ -576,11 +610,45 @@ describe('Server Config (config.ts)', () => {
     });
   });
 
+  describe('UseBuiltinRipgrep Configuration', () => {
+    it('should default useBuiltinRipgrep to true when not provided', () => {
+      const config = new Config(baseParams);
+      expect(config.getUseBuiltinRipgrep()).toBe(true);
+    });
+
+    it('should set useBuiltinRipgrep to false when provided as false', () => {
+      const paramsWithBuiltinRipgrep: ConfigParameters = {
+        ...baseParams,
+        useBuiltinRipgrep: false,
+      };
+      const config = new Config(paramsWithBuiltinRipgrep);
+      expect(config.getUseBuiltinRipgrep()).toBe(false);
+    });
+
+    it('should set useBuiltinRipgrep to true when explicitly provided as true', () => {
+      const paramsWithBuiltinRipgrep: ConfigParameters = {
+        ...baseParams,
+        useBuiltinRipgrep: true,
+      };
+      const config = new Config(paramsWithBuiltinRipgrep);
+      expect(config.getUseBuiltinRipgrep()).toBe(true);
+    });
+
+    it('should default useBuiltinRipgrep to true when undefined', () => {
+      const paramsWithUndefinedBuiltinRipgrep: ConfigParameters = {
+        ...baseParams,
+        useBuiltinRipgrep: undefined,
+      };
+      const config = new Config(paramsWithUndefinedBuiltinRipgrep);
+      expect(config.getUseBuiltinRipgrep()).toBe(true);
+    });
+  });
+
   describe('createToolRegistry', () => {
     it('should register a tool if coreTools contains an argument-specific pattern', async () => {
       const params: ConfigParameters = {
         ...baseParams,
-        coreTools: ['ShellTool(git status)'],
+        coreTools: ['Shell(git status)'], // Use display name instead of class name
       };
       const config = new Config(params);
       await config.initialize();
@@ -603,6 +671,89 @@ describe('Server Config (config.ts)', () => {
         registerToolMock as Mock
       ).mock.calls.some((call) => call[0] instanceof vi.mocked(ReadFileTool));
       expect(wasReadFileToolRegistered).toBe(false);
+    });
+
+    it('should register a tool if coreTools contains the displayName', async () => {
+      const params: ConfigParameters = {
+        ...baseParams,
+        coreTools: ['Shell'],
+      };
+      const config = new Config(params);
+      await config.initialize();
+
+      const registerToolMock = (
+        (await vi.importMock('../tools/tool-registry')) as {
+          ToolRegistry: { prototype: { registerTool: Mock } };
+        }
+      ).ToolRegistry.prototype.registerTool;
+
+      const wasShellToolRegistered = (registerToolMock as Mock).mock.calls.some(
+        (call) => call[0] instanceof vi.mocked(ShellTool),
+      );
+      expect(wasShellToolRegistered).toBe(true);
+    });
+
+    it('should register a tool if coreTools contains the displayName with argument-specific pattern', async () => {
+      const params: ConfigParameters = {
+        ...baseParams,
+        coreTools: ['Shell(git status)'],
+      };
+      const config = new Config(params);
+      await config.initialize();
+
+      const registerToolMock = (
+        (await vi.importMock('../tools/tool-registry')) as {
+          ToolRegistry: { prototype: { registerTool: Mock } };
+        }
+      ).ToolRegistry.prototype.registerTool;
+
+      const wasShellToolRegistered = (registerToolMock as Mock).mock.calls.some(
+        (call) => call[0] instanceof vi.mocked(ShellTool),
+      );
+      expect(wasShellToolRegistered).toBe(true);
+    });
+
+    it('should register a tool if coreTools contains a legacy tool name alias', async () => {
+      const params: ConfigParameters = {
+        ...baseParams,
+        useRipgrep: false,
+        coreTools: ['search_file_content'],
+      };
+      const config = new Config(params);
+      await config.initialize();
+
+      const registerToolMock = (
+        (await vi.importMock('../tools/tool-registry')) as {
+          ToolRegistry: { prototype: { registerTool: Mock } };
+        }
+      ).ToolRegistry.prototype.registerTool;
+
+      const wasGrepToolRegistered = (registerToolMock as Mock).mock.calls.some(
+        (call) => call[0] instanceof vi.mocked(GrepTool),
+      );
+      expect(wasGrepToolRegistered).toBe(true);
+    });
+
+    it('should not register a tool if excludeTools contains a legacy display name alias', async () => {
+      const params: ConfigParameters = {
+        ...baseParams,
+        useRipgrep: false,
+        coreTools: undefined,
+        excludeTools: ['SearchFiles'],
+      };
+      const config = new Config(params);
+      await config.initialize();
+
+      const registerToolMock = (
+        (await vi.importMock('../tools/tool-registry')) as {
+          ToolRegistry: { prototype: { registerTool: Mock } };
+        }
+      ).ToolRegistry.prototype.registerTool;
+
+      const wasGrepToolRegistered = (registerToolMock as Mock).mock.calls.some(
+        (call) => call[0] instanceof vi.mocked(GrepTool),
+      );
+      expect(wasGrepToolRegistered).toBe(false);
     });
 
     describe('with minified tool class names', () => {
@@ -630,7 +781,27 @@ describe('Server Config (config.ts)', () => {
       it('should register a tool if coreTools contains the non-minified class name', async () => {
         const params: ConfigParameters = {
           ...baseParams,
-          coreTools: ['ShellTool'],
+          coreTools: ['Shell'], // Use display name instead of class name
+        };
+        const config = new Config(params);
+        await config.initialize();
+
+        const registerToolMock = (
+          (await vi.importMock('../tools/tool-registry')) as {
+            ToolRegistry: { prototype: { registerTool: Mock } };
+          }
+        ).ToolRegistry.prototype.registerTool;
+
+        const wasShellToolRegistered = (
+          registerToolMock as Mock
+        ).mock.calls.some((call) => call[0] instanceof vi.mocked(ShellTool));
+        expect(wasShellToolRegistered).toBe(true);
+      });
+
+      it('should register a tool if coreTools contains the displayName', async () => {
+        const params: ConfigParameters = {
+          ...baseParams,
+          coreTools: ['Shell'],
         };
         const config = new Config(params);
         await config.initialize();
@@ -651,7 +822,28 @@ describe('Server Config (config.ts)', () => {
         const params: ConfigParameters = {
           ...baseParams,
           coreTools: undefined, // all tools enabled by default
-          excludeTools: ['ShellTool'],
+          excludeTools: ['Shell'], // Use display name instead of class name
+        };
+        const config = new Config(params);
+        await config.initialize();
+
+        const registerToolMock = (
+          (await vi.importMock('../tools/tool-registry')) as {
+            ToolRegistry: { prototype: { registerTool: Mock } };
+          }
+        ).ToolRegistry.prototype.registerTool;
+
+        const wasShellToolRegistered = (
+          registerToolMock as Mock
+        ).mock.calls.some((call) => call[0] instanceof vi.mocked(ShellTool));
+        expect(wasShellToolRegistered).toBe(false);
+      });
+
+      it('should not register a tool if excludeTools contains the displayName', async () => {
+        const params: ConfigParameters = {
+          ...baseParams,
+          coreTools: undefined, // all tools enabled by default
+          excludeTools: ['Shell'],
         };
         const config = new Config(params);
         await config.initialize();
@@ -671,7 +863,27 @@ describe('Server Config (config.ts)', () => {
       it('should register a tool if coreTools contains an argument-specific pattern with the non-minified class name', async () => {
         const params: ConfigParameters = {
           ...baseParams,
-          coreTools: ['ShellTool(git status)'],
+          coreTools: ['Shell(git status)'], // Use display name instead of class name
+        };
+        const config = new Config(params);
+        await config.initialize();
+
+        const registerToolMock = (
+          (await vi.importMock('../tools/tool-registry')) as {
+            ToolRegistry: { prototype: { registerTool: Mock } };
+          }
+        ).ToolRegistry.prototype.registerTool;
+
+        const wasShellToolRegistered = (
+          registerToolMock as Mock
+        ).mock.calls.some((call) => call[0] instanceof vi.mocked(ShellTool));
+        expect(wasShellToolRegistered).toBe(true);
+      });
+
+      it('should register a tool if coreTools contains an argument-specific pattern with the displayName', async () => {
+        const params: ConfigParameters = {
+          ...baseParams,
+          coreTools: ['Shell(git status)'],
         };
         const config = new Config(params);
         await config.initialize();
@@ -697,13 +909,13 @@ describe('Server Config (config.ts)', () => {
 
     it('should return the calculated threshold when it is smaller than the default', () => {
       const config = new Config(baseParams);
-      vi.mocked(tokenLimit).mockReturnValue(32000);
+      vi.mocked(tokenLimit).mockReturnValue(8000);
       vi.mocked(uiTelemetryService.getLastPromptTokenCount).mockReturnValue(
-        1000,
+        2000,
       );
-      // 4 * (32000 - 1000) = 4 * 31000 = 124000
-      // default is 4_000_000
-      expect(config.getTruncateToolOutputThreshold()).toBe(124000);
+      // 4 * (8000 - 2000) = 4 * 6000 = 24000
+      // default is 25_000
+      expect(config.getTruncateToolOutputThreshold()).toBe(24000);
     });
 
     it('should return the default threshold when the calculated value is larger', () => {
@@ -713,8 +925,8 @@ describe('Server Config (config.ts)', () => {
         500_000,
       );
       // 4 * (2_000_000 - 500_000) = 4 * 1_500_000 = 6_000_000
-      // default is 4_000_000
-      expect(config.getTruncateToolOutputThreshold()).toBe(4_000_000);
+      // default is 25_000
+      expect(config.getTruncateToolOutputThreshold()).toBe(25_000);
     });
 
     it('should use a custom truncateToolOutputThreshold if provided', () => {
@@ -823,10 +1035,60 @@ describe('setApprovalMode with folder trust', () => {
 
       expect(wasRipGrepRegistered).toBe(true);
       expect(wasGrepRegistered).toBe(false);
-      expect(logRipgrepFallback).not.toHaveBeenCalled();
+      expect(canUseRipgrep).toHaveBeenCalledWith(true);
     });
 
-    it('should register GrepTool as a fallback when useRipgrep is true but it is not available', async () => {
+    it('should register RipGrepTool with system ripgrep when useBuiltinRipgrep is false', async () => {
+      (canUseRipgrep as Mock).mockResolvedValue(true);
+      const config = new Config({
+        ...baseParams,
+        useRipgrep: true,
+        useBuiltinRipgrep: false,
+      });
+      await config.initialize();
+
+      const calls = (ToolRegistry.prototype.registerTool as Mock).mock.calls;
+      const wasRipGrepRegistered = calls.some(
+        (call) => call[0] instanceof vi.mocked(RipGrepTool),
+      );
+      const wasGrepRegistered = calls.some(
+        (call) => call[0] instanceof vi.mocked(GrepTool),
+      );
+
+      expect(wasRipGrepRegistered).toBe(true);
+      expect(wasGrepRegistered).toBe(false);
+      expect(canUseRipgrep).toHaveBeenCalledWith(false);
+    });
+
+    it('should fall back to GrepTool and log error when useBuiltinRipgrep is false but system ripgrep is not available', async () => {
+      (canUseRipgrep as Mock).mockResolvedValue(false);
+      const config = new Config({
+        ...baseParams,
+        useRipgrep: true,
+        useBuiltinRipgrep: false,
+      });
+      await config.initialize();
+
+      const calls = (ToolRegistry.prototype.registerTool as Mock).mock.calls;
+      const wasRipGrepRegistered = calls.some(
+        (call) => call[0] instanceof vi.mocked(RipGrepTool),
+      );
+      const wasGrepRegistered = calls.some(
+        (call) => call[0] instanceof vi.mocked(GrepTool),
+      );
+
+      expect(wasRipGrepRegistered).toBe(false);
+      expect(wasGrepRegistered).toBe(true);
+      expect(canUseRipgrep).toHaveBeenCalledWith(false);
+      expect(logRipgrepFallback).toHaveBeenCalledWith(
+        config,
+        expect.any(RipgrepFallbackEvent),
+      );
+      const event = (logRipgrepFallback as Mock).mock.calls[0][1];
+      expect(event.error).toContain('Ripgrep is not available');
+    });
+
+    it('should fall back to GrepTool and log error when useRipgrep is true and builtin ripgrep is not available', async () => {
       (canUseRipgrep as Mock).mockResolvedValue(false);
       const config = new Config({ ...baseParams, useRipgrep: true });
       await config.initialize();
@@ -841,15 +1103,16 @@ describe('setApprovalMode with folder trust', () => {
 
       expect(wasRipGrepRegistered).toBe(false);
       expect(wasGrepRegistered).toBe(true);
+      expect(canUseRipgrep).toHaveBeenCalledWith(true);
       expect(logRipgrepFallback).toHaveBeenCalledWith(
         config,
         expect.any(RipgrepFallbackEvent),
       );
       const event = (logRipgrepFallback as Mock).mock.calls[0][1];
-      expect(event.error).toBeUndefined();
+      expect(event.error).toContain('Ripgrep is not available');
     });
 
-    it('should register GrepTool as a fallback when canUseRipgrep throws an error', async () => {
+    it('should fall back to GrepTool and log error when canUseRipgrep throws an error', async () => {
       const error = new Error('ripGrep check failed');
       (canUseRipgrep as Mock).mockRejectedValue(error);
       const config = new Config({ ...baseParams, useRipgrep: true });
@@ -888,7 +1151,6 @@ describe('setApprovalMode with folder trust', () => {
       expect(wasRipGrepRegistered).toBe(false);
       expect(wasGrepRegistered).toBe(true);
       expect(canUseRipgrep).not.toHaveBeenCalled();
-      expect(logRipgrepFallback).not.toHaveBeenCalled();
     });
   });
 });
