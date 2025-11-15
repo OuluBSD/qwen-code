@@ -128,6 +128,7 @@ export interface CliArgs {
   serverMode: string | undefined;
   pipePath: string | undefined;
   tcpPort: number | undefined;
+  vlmSwitchMode: string | undefined;
 }
 
 export async function parseArguments(settings: Settings): Promise<CliArgs> {
@@ -374,7 +375,6 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
             'Default behavior when images are detected in input. Values: once (one-time switch), session (switch for entire session), persist (continue with current model). Overrides settings files.',
           default: process.env['VLM_SWITCH_MODE'],
         })
-<<<<<<< HEAD
         .option('output-format', {
           alias: 'o',
           type: 'string',
@@ -392,10 +392,6 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
         .deprecateOption(
           'checkpointing',
           'Use the "general.checkpointing.enabled" setting in settings.json instead. This flag will be removed in a future version.',
-        )
-        .deprecateOption(
-          'all-files',
-          'Use @ includes in the application instead. This flag will be removed in a future version.',
         )
         .deprecateOption(
           'prompt',
@@ -425,16 +421,7 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
             return 'Cannot use both --yolo (-y) and --approval-mode together. Use --approval-mode=yolo instead.';
           }
           return true;
-        }),
-          }
-          if (argv['prompt'] && argv['promptInteractive']) {
-            return 'Cannot use both --prompt (-p) and --prompt-interactive (-i) together';
-          }
-          if (argv['yolo'] && argv['approvalMode']) {
-            return 'Cannot use both --yolo (-y) and --approval-mode together. Use --approval-mode=yolo instead.';
-          }
-          return true;
-        }),
+        })
     )
     // Register MCP subcommands
     .command(mcpCommand);

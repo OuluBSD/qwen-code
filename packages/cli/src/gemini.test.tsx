@@ -338,6 +338,9 @@ describe('gemini.tsx main function kitty protocol', () => {
       vlmSwitchMode: undefined,
       useSmartEdit: undefined,
       outputFormat: undefined,
+      serverMode: undefined,
+      pipePath: undefined,
+      tcpPort: undefined,
     });
 
     await main();

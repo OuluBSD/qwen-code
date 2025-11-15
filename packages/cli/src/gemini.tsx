@@ -111,7 +111,6 @@ function getNodeMemoryArgs(isDebugMode: boolean): string[] {
   return [];
 }
 
-import { runZedIntegration } from './zed-integration/zedIntegration.js';
 import { loadSandboxConfig } from './config/sandboxConfig.js';
 import { ExtensionEnablementManager } from './config/extensions/extensionEnablement.js';
 
@@ -847,7 +846,6 @@ export async function main() {
         `No input provided via stdin. Input can be provided by piping data into gemini or using the --prompt option.`,
       );
       process.exit(1);
-    }
     }
 
     const prompt_id = Math.random().toString(16).slice(2);
